@@ -4,7 +4,7 @@ These models define the structure for request/response data.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -26,6 +26,12 @@ class ProductBase(BaseModel):
     has_discount: Optional[int] = Field(0, description="Whether product has discount (0 or 1)")
     comments: Optional[str] = Field(None, description="Additional comments")
     state: Optional[str] = Field("activo", description="Product state")
+    # Online store fields
+    en_tienda_online: Optional[bool] = Field(False, description="Whether product is available in online store")
+    nombre_web: Optional[str] = Field(None, description="Product name for online store")
+    descripcion_web: Optional[str] = Field(None, description="Product description for online store")
+    slug: Optional[str] = Field(None, description="URL-friendly slug for the product")
+    precio_web: Optional[float] = Field(None, description="Price for online store")
 
 
 class ProductCreate(ProductBase):
@@ -51,6 +57,12 @@ class ProductUpdate(BaseModel):
     has_discount: Optional[int] = None
     comments: Optional[str] = None
     state: Optional[str] = None
+    # Online store fields
+    en_tienda_online: Optional[bool] = None
+    nombre_web: Optional[str] = None
+    descripcion_web: Optional[str] = None
+    slug: Optional[str] = None
+    precio_web: Optional[float] = None
 
 
 class ProductResponse(ProductBase):
@@ -69,6 +81,79 @@ class ProductListResponse(BaseModel):
     """Model for listing multiple products."""
     products: list[ProductResponse]
     total: int = Field(..., description="Total number of products")
+
+
+# Image models
+class ProductImage(BaseModel):
+    """Model for product images."""
+    id: int = Field(..., description="Image ID")
+    image_url: str = Field(..., description="URL of the image")
+    product_id: int = Field(..., description="Product ID this image belongs to")
+    
+    class Config:
+        from_attributes = True
+
+
+class AddProductImage(BaseModel):
+    """Model for adding an image to a product."""
+    image_url: str = Field(..., description="URL of the image to add")
+
+
+# Product with images
+class ProductWithImages(BaseModel):
+    """Product model with image URLs."""
+    id: int
+    product_name: str
+    nombre_web: Optional[str] = None
+    description: Optional[str] = None
+    descripcion_web: Optional[str] = None
+    sale_price: Optional[float] = None
+    precio_web: Optional[float] = None
+    slug: Optional[str] = None
+    en_tienda_online: bool = False
+    images: List[str] = Field(default_factory=list, description="List of image URLs")
+    category: Optional[str] = None
+    state: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+
+# Online store product model
+class OnlineStoreProduct(BaseModel):
+    """Product model specifically for the online store."""
+    id: int
+    nombre_web: str = Field(..., description="Product name for web")
+    descripcion_web: str = Field(..., description="Product description for web")
+    precio_web: float = Field(..., description="Price for web")
+    slug: str = Field(..., description="URL-friendly slug")
+    images: List[str] = Field(default_factory=list, description="List of image URLs")
+    category: Optional[str] = None
+    stock_disponible: int = Field(0, description="Available stock quantity")
+    variantes: List[dict] = Field(default_factory=list, description="Product variants with stock")
+    
+    class Config:
+        from_attributes = True
+
+
+# Detailed product model with all information
+class ProductDetail(BaseModel):
+    """Complete product information including variants, colors, sizes, and stock."""
+    id: int
+    nombre_web: str
+    descripcion_web: str
+    precio_web: float
+    slug: str
+    category: Optional[str] = None
+    images: List[str] = Field(default_factory=list, description="List of image URLs")
+    stock_disponible: int = Field(0, description="Total available stock")
+    # Additional detailed fields
+    colores: List[dict] = Field(default_factory=list, description="Available colors with hex codes")
+    talles: List[str] = Field(default_factory=list, description="Available sizes")
+    variantes: List[dict] = Field(default_factory=list, description="Product variants with stock")
+    
+    class Config:
+        from_attributes = True
 
 
 # Simplified model for the virtual store (matching your original mock data)

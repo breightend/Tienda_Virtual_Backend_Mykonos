@@ -4,6 +4,9 @@ class TABLES(Enum):
     ACCOUNT_MOVEMENTS = "account_movements"
     GROUP = "groups"
     USERS = "users"
+    WEB_USERS = "web_users"
+    WEB_CARTS = "web_carts"
+    WEB_CART_ITEMS = "web_cart_items"
     SIZE_CATEGORIES = "size_categories"  # Categorias de los talles
     SIZES = "sizes"  # talles de los productos
     COLORS = "colors"  # colores que pueden ser los productos
@@ -159,13 +162,77 @@ DATABASE_TABLES = {
             "phone": "TEXT",
             "domicilio": "TEXT",  # Número de teléfono del usuario.
             "cuit": "TEXT NOT NULL UNIQUE",  # Número de teléfono del usuario.
-            "role": "TEXT",  # Rol del usuario (ejemplo: admin, usuario normal).
+            "role": "TEXT",  # Rol del usuario (ejemplo: admin, employee).
             "status": "TEXT",  # Estado del usuario (activo, inactivo, etc.).
             "session_token": "TEXT",  # Token de sesión para la autenticación del usuario.
             "profile_image": "BLOB",  # Imagen de perfil del usuario, almacenada como BLOB.
             "created_at": "TEXT DEFAULT (datetime('now','localtime'))",  # Fecha de creación del registro, se establece por defecto a la fecha y hora actuales.
         }
     },
+    #Las siguientes 3 tablas hay que agregarlas.
+    TABLES.WEB_USERS: {
+        "columns": {
+            "id": "INTEGER PRIMARY KEY AUTOINCREMENT",  # Identificador único para cada usuario, se incrementa automáticamente.
+            "username": "TEXT UNIQUE",  # Nombre de usuario, debe ser único y no nulo.
+            "fullname": "TEXT",  # Nombre completo del usuario, requerido.
+            "password": "TEXT",  # Contraseña del usuario, requerida.
+            "email": "TEXT",  # Correo electrónico del usuario.
+            "phone": "TEXT",
+            "domicilio": "TEXT",  # Número de teléfono del usuario.
+            "cuit": "TEXT NOT NULL UNIQUE",  # Número de teléfono del usuario.
+            "role": "TEXT",  # Rol del usuario (ejemplo: admin, employee).
+            "status": "TEXT",  # Estado del usuario (activo, inactivo, etc.).
+            "session_token": "TEXT",  # Token de sesión para la autenticación del usuario.
+            "profile_image_url": "TEXT",  # Imagen de perfil del usuario, almacenada como BLOB.
+            "created_at": "TEXT DEFAULT (datetime('now','localtime'))",  # Fecha de creación del registro, se establece por defecto a la fecha y hora actuales.
+        }
+    },
+    TABLES.WEB_CARTS: {
+        "columns": {
+            "id": "INTEGER PRIMARY KEY AUTOINCREMENT",  # Identificador único para cada carrito, se incrementa automáticamente.
+            "user_id": "INTEGER NOT NULL",  # ID del usuario al que pertenece el carrito.
+            "created_at": "TEXT DEFAULT (datetime('now','localtime'))",  # Fecha de creación del carrito, se establece por defecto a la fecha y hora actuales.
+        }
+        "foreign_keys": [
+            {  # Relación con tabla de usuarios
+                "column": "user_id",
+                "reference_table": TABLES.WEB_USERS,
+                "reference_column": "id",
+                "export_column_name": "user_id",  # <- columna de referencia cuando se exportan tablas
+            },
+        ],
+    },
+    TABLES.WEB_CART_ITEMS: {
+        "columns": {
+            "id": "INTEGER PRIMARY KEY AUTOINCREMENT",  # Identificador único para cada ítem del carrito, se incrementa automáticamente.
+            "cart_id": "INTEGER NOT NULL",  # ID del carrito al que pertenece el ítem.
+            "product_id": "INTEGER NOT NULL",  # ID del producto que se agrega al carrito.
+            "variant_id": "INTEGER NOT NULL",  # ID de la variante del producto que se agrega al carrito.
+            "quantity": "INTEGER NOT NULL",  # Cantidad del producto en el carrito.
+            "created_at": "TEXT DEFAULT (datetime('now','localtime'))",  # Fecha de creación del ítem, se establece por defecto a la fecha y hora actuales.
+        }
+        "foreign_keys": [
+            {  # Relación con tabla de carritos
+                "column": "cart_id",
+                "reference_table": TABLES.WEB_CARTS,
+                "reference_column": "id",
+                "export_column_name": "cart_id",  # <- columna de referencia cuando se exportan tablas
+            },
+            {  # Relación con tabla de productos
+                "column": "product_id",
+                "reference_table": TABLES.PRODUCTS,
+                "reference_column": "id",
+                "export_column_name": "product_id",  # <- columna de referencia cuando se exportan tablas
+            },
+            {  # Relación con tabla de variantes
+                "column": "variant_id",
+                "reference_table": TABLES.PRODUCT_VARIANTS,
+                "reference_column": "id",
+                "export_column_name": "variant_id",  # <- columna de referencia cuando se exportan tablas
+            },
+        ],
+    },
+
     TABLES.SIZE_CATEGORIES: {
         "columns": {
             "id": "INTEGER PRIMARY KEY AUTOINCREMENT",  # Identificador único para cada categoría de tamaño, se incrementa automáticamente.
@@ -227,11 +294,16 @@ DATABASE_TABLES = {
             "has_discount": "INTEGER DEFAULT 0",  # Indica si el producto tiene descuento aplicado.
             "comments": "TEXT",  # Comentarios adicionales sobre el producto.
             "user_id": "INTEGER",  # ID del usuario que creó o modificó el producto.
-            "images_ids": "INTEGER",  # IDs de las imágenes asociadas al producto.
+            "images_ids": "INTEGER",  # Eliminar.
             "brand_id": "INTEGER",  # ID de la marca del producto.
             "creation_date": "timestamp [CURRENT_TIMESTAMP]",  # Fecha de creación del producto, se establece por defecto a la fecha y hora actuales.
             "last_modified_date": "TEXT",  # Fecha de la última modificación del producto.
             "state": "TEXT DEFAULT 'activo'",  # Estado del producto posibles: (enTienda, sinStock, esperandoArribo).
+            "en_tienda_online": "BOOLEAN DEFAULT FALSE", #es si esta en la tienda online.
+            "nombre_web": "TEXT", #nombre del producto para la tienda online.
+            "descripcion_web": "TEXT", #descripcion del producto para la tienda online.
+            "precio_web": "REAL", #precio del producto para la tienda online.
+            "slug": "TEXT", #slug del producto para la tienda online es para la url.
         },
         "foreign_keys": [
             {  # Relación con la tabla de usuarios.
@@ -258,18 +330,13 @@ DATABASE_TABLES = {
                 "reference_column": "id",
                 "export_column_name": "entity_name",
             },
-            {
-                "column": "images_ids",
-                "reference_table": TABLES.IMAGES,
-                "reference_column": "id",
-                "export_column_name": "image_data",
-            },
         ],
     },
     TABLES.IMAGES: {
         "columns": {
             "id": "INTEGER PRIMARY KEY AUTOINCREMENT",  # Identificador único para cada imagen, se incrementa automáticamente.
-            "image_data": "BLOB NOT NULL",  # Datos de la imagen, almacenados como BLOB.
+            "image_data": "BLOB NOT NULL",  # Datos de la imagen, almacenados como BLOB. #eliminar el not null
+            "image_url": "TEXT",  # URL de la imagen.
             "product_id": "INTEGER",  # ID del producto al que corresponde la imagen.
         },
         "foreign_keys": [
@@ -589,6 +656,13 @@ DATABASE_TABLES = {
             "refunded_at": "TEXT",  # Fecha y hora del reembolso
             "created_at": "TEXT DEFAULT CURRENT_TIMESTAMP",  # Fecha de creación del registro
             "updated_at": "TEXT DEFAULT CURRENT_TIMESTAMP",  # Fecha de última actualización
+            "en_tienda_online": "BOOLEAN",  # Indica si se compro en la tienda lonline
+            "origin": "TEXT DEFAULT 'local'", # Valores: 'local', 'web'
+            "shipping_address": "TEXT",       # Dirección de envío (solo si es web)
+            "shipping_status": "TEXT",        # 'pendiente', 'enviado', 'entregado'
+            "external_payment_id": "TEXT"     # El ID que te da MercadoPago/Stripe
+            "web_user_id": "INTEGER", # Para vincular con WEB_USERS
+            "shipping_cost": "REAL DEFAULT 0", # Por si cobras envío aparte
         },
         "foreign_keys": [
             {  # Relación con tabla de clientes (entidades)
@@ -614,6 +688,12 @@ DATABASE_TABLES = {
                 "reference_table": TABLES.STORAGE,
                 "reference_column": "id",
                 "export_column_name": "name",
+            },
+            {  # Relación con tabla de usuarios (cajero)
+                "column": "web_user_id",
+                "reference_table": TABLES.WEB_USERS,
+                "reference_column": "id",
+                "export_column_name": "username",
             },
         ],
     },
