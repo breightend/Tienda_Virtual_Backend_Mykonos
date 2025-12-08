@@ -226,7 +226,7 @@ DATABASE_TABLES = {
             },
             {  # Relación con tabla de variantes
                 "column": "variant_id",
-                "reference_table": TABLES.PRODUCT_VARIANTS,
+                "reference_table": TABLES.WAREHOUSE_STOCK_VARIANTS,
                 "reference_column": "id",
                 "export_column_name": "variant_id",  # <- columna de referencia cuando se exportan tablas
             },
@@ -430,7 +430,7 @@ DATABASE_TABLES = {
             "color_id": "INTEGER",  # Identificador del color (puede ser NULL si no aplica).
             "branch_id": "INTEGER NOT NULL",  # Identificador de la sucursal.
             "quantity": "INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0)",  # Cantidad específica de esta variante.
-            "variant_barcode": "TEXT UNIQUE",  # Código de barras único para esta variante específica (talle + color).
+            "variant_barcode": "TEXT",  # Código de barras único para esta variante específica (talle + color).
             "last_updated": "TEXT DEFAULT CURRENT_TIMESTAMP",  # Fecha de última actualización.
         },
         "foreign_keys": [

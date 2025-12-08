@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-from routes import products, groups
+from routes import products, groups, user, purchases
 from config.db_connection import DatabaseManager
 
 # Configure logging
@@ -66,6 +66,8 @@ app.add_middleware(
 # Include routers
 app.include_router(products.router, prefix="/products", tags=["Productos"])
 app.include_router(groups.router, prefix="/groups", tags=["Grupos"])
+app.include_router(user.router, prefix="/auth", tags=["Autenticación"])
+app.include_router(purchases.router, prefix="/purchases", tags=["Compras"])
 
 
 @app.get("/")

@@ -1,0 +1,153 @@
+"""
+Pydantic models for user authentication and management.
+"""
+
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional
+from datetime import datetime
+
+
+class UserRegister(BaseModel):
+    """Model for user registration request."""
+    username: str = Field(..., min_length=3, max_length=50, description="Unique username")
+    fullname: Optional[str] = Field(None, min_length=1, max_length=100, description="Full name")
+    email: EmailStr = Field(..., description="Email address")
+    password: str = Field(..., min_length=6, description="Password (min 6 characters)")
+    phone: Optional[str] = Field(None, max_length=20, description="Phone number")
+    domicilio: Optional[str] = Field(None, max_length=200, description="Address")
+    cuit: Optional[str] = Field(None, min_length=11, max_length=11, description="CUIT (11 digits)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "juanperez",
+                "fullname": "Juan Pérez",
+                "email": "juan@example.com",
+                "password": "securepass123"
+            }
+        }
+
+
+class UserLogin(BaseModel):
+    """Model for user login request."""
+    username: str = Field(..., description="Username or email")
+    password: str = Field(..., description="Password")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "juanperez",
+                "password": "securepass123"
+            }
+        }
+
+
+class UserResponse(BaseModel):
+    """Model for user data response (without sensitive information)."""
+    id: int
+    username: str
+    fullname: Optional[str] = None
+    email: str
+    phone: Optional[str] = None
+    domicilio: Optional[str] = None
+    cuit: Optional[str] = None
+    role: Optional[str] = None
+    status: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    email_verified: Optional[bool] = False
+    google_id: Optional[str] = None
+    created_at: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id": 1,
+                "username": "juanperez",
+                "fullname": "Juan Pérez",
+                "email": "juan@example.com",
+                "email_verified": False,
+                "role": "customer",
+                "status": "active",
+                "created_at": "2024-12-08T10:30:00"
+            }
+        }
+
+
+class TokenResponse(BaseModel):
+    """Model for authentication response with token."""
+    token: str = Field(..., description="Session token")
+    user: UserResponse = Field(..., description="User data")
+    message: str = Field(default="Authentication successful")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "abc123def456ghi789",
+                "user": {
+                    "id": 1,
+                    "username": "juanperez",
+                    "fullname": "Juan Pérez",
+                    "email": "juan@example.com",
+                    "cuit": "20123456789"
+                },
+                "message": "Authentication successful"
+            }
+        }
+
+
+class UserUpdate(BaseModel):
+    """Model for updating user information."""
+    fullname: Optional[str] = Field(None, min_length=1, max_length=100)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = Field(None, max_length=20)
+    domicilio: Optional[str] = Field(None, max_length=200)
+    profile_image_url: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "fullname": "Juan Carlos Pérez",
+                "phone": "3434567891",
+                "domicilio": "Avenida Siempreviva 742"
+            }
+        }
+
+
+class PasswordChange(BaseModel):
+    """Model for password change request."""
+    current_password: str = Field(..., description="Current password")
+    new_password: str = Field(..., min_length=6, description="New password (min 6 characters)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "current_password": "oldpass123",
+                "new_password": "newpass456"
+            }
+        }
+
+
+class EmailVerification(BaseModel):
+    """Model for email verification request."""
+    token: str = Field(..., description="Verification token from email")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "abc123def456ghi789"
+            }
+        }
+
+
+class ResendVerification(BaseModel):
+    """Model for resending verification email."""
+    email: EmailStr = Field(..., description="Email address to resend verification")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "juan@example.com"
+            }
+        }
+
