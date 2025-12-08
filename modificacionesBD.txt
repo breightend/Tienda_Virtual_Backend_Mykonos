@@ -42,6 +42,19 @@ CREATE TABLE IF NOT EXISTS web_cart_items (
     CONSTRAINT fk_cart_items_variant FOREIGN KEY (variant_id) REFERENCES warehouse_stock_variants(id)
 );
 
+-- Tabla de Historial de seguimiento de ventas
+CREATE TABLE IF NOT EXISTS sales_tracking_history (
+    id SERIAL PRIMARY KEY,
+    sale_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    description TEXT,
+    location TEXT,
+    changed_by_user_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_sales_tracking_history_sale FOREIGN KEY (sale_id) REFERENCES sales(id),
+    CONSTRAINT fk_sales_tracking_history_user FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
+);
+
 -- ---------------------------------------------------------
 -- 2. MODIFICACIÓN DE LA TABLA PRODUCTS
 -- ---------------------------------------------------------
@@ -51,6 +64,9 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS en_tienda_online BOOLEAN DEFAULT F
 ALTER TABLE products ADD COLUMN IF NOT EXISTS nombre_web TEXT;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS descripcion_web TEXT;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS slug TEXT;
+
+ALTER TABLE SALES 
+ADD COLUMN delivery_type VARCHAR(20) DEFAULT 'envio'; -- Valores sugeridos: 'domicilio', 'sucursal' (retiro)
 
 -- Crear restricción de unicidad para el slug (para URLs amigables)
 -- Nota: En Postgres se hace agregando un constraint

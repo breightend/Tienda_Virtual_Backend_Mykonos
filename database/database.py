@@ -663,6 +663,7 @@ DATABASE_TABLES = {
             "external_payment_id": "TEXT"     # El ID que te da MercadoPago/Stripe
             "web_user_id": "INTEGER", # Para vincular con WEB_USERS
             "shipping_cost": "REAL DEFAULT 0", # Por si cobras envío aparte
+            "delivery_type": "TEXT DEFAULT 'envio'", # Valores sugeridos: 'domicilio', 'sucursal' (retiro)
         },
         "foreign_keys": [
             {  # Relación con tabla de clientes (entidades)
@@ -738,6 +739,31 @@ DATABASE_TABLES = {
                 "reference_table": TABLES.WAREHOUSE_STOCK_VARIANTS,
                 "reference_column": "id",
                 "export_column_name": "id",
+            },
+        ],
+    },
+    TABLES.SALES_TRACKING_HISTORY: {
+        "columns": {
+            "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
+            "sale_id": "INTEGER NOT NULL",      # Vinculado a la venta
+            "status": "TEXT NOT NULL",          # El estado (preparando, despachado, etc.)
+            "description": "TEXT",              # Ej: "Empaquetado por Juan", "Entregado a Correo Andreani"
+            "location": "TEXT",                 # Ej: "Sucursal Centro", "Centro de Distribución"
+            "changed_by_user_id": "INTEGER",    # Quién actualizó el estado
+            "created_at": "timestamp DEFAULT CURRENT_TIMESTAMP", # Cuándo ocurrió
+        },
+        "foreign_keys": [
+            {
+                "column": "sale_id",
+                "reference_table": TABLES.SALES,
+                "reference_column": "id",
+                "export_column_name": "id",
+            },
+            {
+                "column": "changed_by_user_id",
+                "reference_table": TABLES.USERS,
+                "reference_column": "id",
+                "export_column_name": "username",
             },
         ],
     },

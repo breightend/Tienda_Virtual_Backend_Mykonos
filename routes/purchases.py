@@ -150,6 +150,8 @@ async def get_purchase_detail(
     
     - **purchase_id**: ID of the purchase to retrieve
     
+    Includes tracking history if available.
+    
     Requires Authorization header with Bearer token.
     """
     if not authorization or not authorization.startswith("Bearer "):
@@ -182,6 +184,7 @@ async def get_purchase_detail(
                 s.invoice_number,
                 s.notes,
                 s.origin,
+                s.delivery_type,
                 s.created_at,
                 s.updated_at
             FROM sales s
@@ -246,5 +249,30 @@ async def get_purchase_detail(
             items.append(detail_dict)
         
         sale_dict['items'] = items
+        
+        # Get tracking history if table exists
+        try:
+            tracking_history = await conn.fetch(
+                """
+                SELECT 
+                    sth.id,
+                    sth.status,
+                    sth.description,
+                    sth.location,
+                    sth.created_at,
+                    u.username as changed_by
+                FROM sales_tracking_history sth
+                LEFT JOIN users u ON sth.changed_by_user_id = u.id
+                WHERE sth.sale_id = $1
+                ORDER BY sth.created_at ASC
+                """,
+                purchase_id
+            )
+            
+            sale_dict['tracking_history'] = [dict(record) for record in tracking_history]
+        except Exception as e:
+            # Table might not exist yet, return empty history
+            print(f"Warning: Could not fetch tracking history: {e}")
+            sale_dict['tracking_history'] = []
         
         return sale_dict
