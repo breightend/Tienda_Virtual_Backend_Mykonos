@@ -1,7 +1,7 @@
 """
 User authentication routes for web users.
 Handles registration, login, logout, and user profile management.
-Includes email verification infrastructure for EmailJS integration.
+Uses FastAPI-Mail for email verification and notifications.
 """
 
 from fastapi import APIRouter, HTTPException, Header, status
@@ -21,6 +21,7 @@ from models.user_models import (
     ResendVerification
 )
 from config.db_connection import DatabaseManager
+from utils.email import send_verification_email
 
 router = APIRouter()
 
@@ -141,10 +142,16 @@ async def register(user_data: UserRegister):
         
         user_response = UserResponse(**dict(new_user))
         
-        # TODO: Send verification email using EmailJS from frontend
-        # The verification_token should be sent to the user's email
-        # Frontend will handle this using EmailJS with the verification link:
-        # http://yourfrontend.com/verify-email?token={verification_token}
+        # Send verification email
+        try:
+            await send_verification_email(
+                email=user_data.email,
+                username=user_data.username,
+                verification_token=verification_token
+            )
+        except Exception as e:
+            # Log error but don't fail registration
+            print(f"Error sending verification email: {e}")
         
         return TokenResponse(
             token=session_token,
@@ -165,7 +172,7 @@ async def verify_email(verification_data: EmailVerification):
     async with pool.acquire() as conn:
         # Find user by verification token
         user = await conn.fetchrow(
-            "SELECT id, email_verified FROM web_users WHERE verification_token = $1",
+            "SELECT id, username, email, email_verified FROM web_users WHERE verification_token = $1",
             verification_data.token
         )
         
@@ -188,6 +195,17 @@ async def verify_email(verification_data: EmailVerification):
             user['id']
         )
     
+    # Send welcome email after successful verification
+    try:
+        from utils.email import send_welcome_email
+        await send_welcome_email(
+            email=user['email'],
+            username=user['username']
+        )
+    except Exception as e:
+        # Log error but don't fail verification
+        print(f"Error sending welcome email: {e}")
+    
     return {"message": "Email verified successfully"}
 
 
@@ -203,7 +221,7 @@ async def resend_verification(resend_data: ResendVerification):
     async with pool.acquire() as conn:
         # Find user by email
         user = await conn.fetchrow(
-            "SELECT id, email_verified, verification_token FROM web_users WHERE email = $1",
+            "SELECT id, username, email, email_verified, verification_token FROM web_users WHERE email = $1",
             resend_data.email
         )
         
@@ -226,9 +244,16 @@ async def resend_verification(resend_data: ResendVerification):
             user['id']
         )
         
-        # TODO: Send verification email using EmailJS from frontend
-        # Frontend should call this endpoint and then send the email
-        # with the verification link containing the token
+        # Send verification email
+        try:
+            await send_verification_email(
+                email=user['email'],
+                username=user['username'],
+                verification_token=verification_token
+            )
+        except Exception as e:
+            # Log error but don't reveal to user
+            print(f"Error sending verification email: {e}")
     
     return {"message": "If the email exists, a verification link has been sent"}
 

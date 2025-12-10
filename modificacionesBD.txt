@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS web_users (
     role TEXT,
     status TEXT,
     session_token TEXT,
+    email_verified BOOLEAN DEFAULT FALSE,
+    verification_token TEXT,
     profile_image_url TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

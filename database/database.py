@@ -183,6 +183,8 @@ DATABASE_TABLES = {
             "role": "TEXT",  # Rol del usuario (ejemplo: admin, employee).
             "status": "TEXT",  # Estado del usuario (activo, inactivo, etc.).
             "session_token": "TEXT",  # Token de sesión para la autenticación del usuario.
+            "verification_token": "TEXT",  # Token de verificación para la autenticación del usuario.
+            "email_verified": "BOOLEAN NOT NULL DEFAULT 0",  # Indica si el correo electrónico del usuario ha sido verificado.
             "profile_image_url": "TEXT",  # Imagen de perfil del usuario, almacenada como BLOB.
             "created_at": "TEXT DEFAULT (datetime('now','localtime'))",  # Fecha de creación del registro, se establece por defecto a la fecha y hora actuales.
         }
