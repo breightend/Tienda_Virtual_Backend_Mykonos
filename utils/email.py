@@ -15,18 +15,20 @@ conf = ConnectionConfig(
     MAIL_FROM=os.getenv("MAIL_FROM", "mykonosboutique733@gmail.com"),
     MAIL_PORT=int(os.getenv("MAIL_PORT", "587")),
     MAIL_SERVER=os.getenv("MAIL_SERVER", "smtp.gmail.com"),
-    FRONTEND_URL=os.getenv("FRONTEND_URL"),
     MAIL_STARTTLS=True,
     MAIL_SSL_TLS=False,
     USE_CREDENTIALS=True,
     VALIDATE_CERTS=True
 )
 
+# Frontend URL for email links
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://mykonosboutique.com.ar")
+
 # Initialize FastMail
 fastmail = FastMail(conf)
 
 
-async def send_verification_email(email: str, username: str, verification_token: str, base_url: str = conf.FRONTEND_URL):
+async def send_verification_email(email: str, username: str, verification_token: str, base_url: str = FRONTEND_URL):
     """
     Send email verification email to new user
     
@@ -109,7 +111,7 @@ async def send_welcome_email(email: str, username: str):
                 
                 <p>Si tienes alguna pregunta o necesitas ayuda, no dudes en contactarnos.</p>
                 
-                <p>Visita nuestra tienda virtual en <a href="{conf.FRONTEND_URL}">{conf.FRONTEND_URL}</a></p>
+                <p>Visita nuestra tienda virtual en <a href="{FRONTEND_URL}">{FRONTEND_URL}</a></p>
                 
                 <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
                 
@@ -186,7 +188,7 @@ async def send_contact_email(name: str, email: str, phone: str, message_text: st
     await fastmail.send_message(message)
 
 
-async def send_password_reset_email(email: str, username: str, reset_token: str, base_url: str = conf.FRONTEND_URL):
+async def send_password_reset_email(email: str, username: str, reset_token: str, base_url: str = FRONTEND_URL):
     """
     Send password reset email
     
@@ -250,7 +252,7 @@ async def send_password_reset_email(email: str, username: str, reset_token: str,
     await fastmail.send_message(message)
 
 
-async def send_order_status_email(email: str, username: str, order_id: int, status: str, description: str, base_url: str = conf.FRONTEND_URL):
+async def send_order_status_email(email: str, username: str, order_id: int, status: str, description: str, base_url: str = FRONTEND_URL):
     """
     Send order status update email
     

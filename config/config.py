@@ -39,7 +39,7 @@ class BaseConfig:
 
     # Server Configuration
     SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
-    SERVER_PORT = int(os.getenv("SERVER_PORT", "5000"))
+    SERVER_PORT = int(os.getenv("SERVER_PORT", "8080"))
     DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 
     # Environment

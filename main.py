@@ -54,7 +54,13 @@ app = FastAPI(
 )
 
 # CORS configuration
-origins = ["http://localhost:5173", "*"]
+origins = [
+    "http://localhost:5173",
+    "https://fastapi.mykonosboutique.com.ar",
+    "https://api.mykonosboutique.com.ar",
+    "https://mykonosboutique.com.ar",
+    "*"
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
