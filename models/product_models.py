@@ -125,7 +125,7 @@ class OnlineStoreProduct(BaseModel):
     id: int
     nombre_web: str = Field(..., description="Product name for web")
     descripcion_web: str = Field(..., description="Product description for web")
-    precio_web: float = Field(..., description="Price for web")
+    precio_web: Optional[float] = Field(None, description="Price for web")
     slug: str = Field(..., description="URL-friendly slug")
     images: List[str] = Field(default_factory=list, description="List of image URLs")
     category: Optional[str] = None
@@ -142,7 +142,7 @@ class ProductDetail(BaseModel):
     id: int
     nombre_web: str
     descripcion_web: str
-    precio_web: float
+    precio_web: Optional[float] = None
     slug: str
     category: Optional[str] = None
     images: List[str] = Field(default_factory=list, description="List of image URLs")
@@ -168,3 +168,27 @@ class ProductSimple(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# Admin endpoint models
+class ProductAllResponse(BaseModel):
+    """Model for GET /products/all endpoint - returns all products for admin."""
+    id: int
+    product_name: str
+    provider_code: Optional[str] = None
+    sale_price: Optional[float] = None
+    en_tienda_online: bool = False
+    group_id: Optional[int] = None
+    description: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class ToggleOnlineRequest(BaseModel):
+    """Model for PATCH /products/{id}/toggle-online endpoint."""
+    en_tienda_online: bool = Field(..., description="Whether to activate/deactivate product in online store")
+    nombre_web: Optional[str] = Field(None, description="Product name for online store")
+    descripcion_web: Optional[str] = Field(None, description="Product description for online store")
+    precio_web: Optional[float] = Field(None, description="Price for online store")
+    slug: Optional[str] = Field(None, description="URL-friendly slug (auto-generated if not provided)")

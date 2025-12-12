@@ -102,7 +102,7 @@ async def verify_tables():
         
         # Verificar nuevas columnas en products
         print("\n🔍 Verificando columnas nuevas en 'products'...")
-        new_columns = ['en_tienda_online', 'nombre_web', 'descripcion_web', 'slug']
+        new_columns = ['en_tienda_online', 'nombre_web', 'descripcion_web', 'slug', 'precio_web']
         
         for column in new_columns:
             exists = await conn.fetchval(

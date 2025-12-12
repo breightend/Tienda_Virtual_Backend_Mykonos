@@ -66,6 +66,7 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS en_tienda_online BOOLEAN DEFAULT F
 ALTER TABLE products ADD COLUMN IF NOT EXISTS nombre_web TEXT;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS descripcion_web TEXT;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS slug TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS precio_web NUMERIC(10,2);
 
 -- Crear restricción de unicidad para el slug (para URLs amigables)
 ALTER TABLE products DROP CONSTRAINT IF EXISTS uq_products_slug;

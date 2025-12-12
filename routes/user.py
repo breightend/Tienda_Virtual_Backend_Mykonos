@@ -56,7 +56,7 @@ async def get_user_by_token(token: str):
         user = await conn.fetchrow(
             """
             SELECT id, username, fullname, email, phone, domicilio, cuit, 
-                   role, status, profile_image_url, email_verified, google_id, created_at
+                   role, status, profile_image_url, email_verified, created_at
             FROM web_users
             WHERE session_token = $1 AND status = 'active'
             """,
@@ -124,7 +124,7 @@ async def register(user_data: UserRegister):
              role, status, session_token, email_verified, verification_token)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING id, username, fullname, email, phone, domicilio, cuit, 
-                      role, status, profile_image_url, email_verified, google_id, created_at
+                      role, status, profile_image_url, email_verified, created_at
             """,
             user_data.username,
             user_data.fullname,
@@ -275,7 +275,7 @@ async def login(credentials: UserLogin):
         user = await conn.fetchrow(
             """
             SELECT id, username, fullname, email, phone, domicilio, cuit, 
-                   role, status, profile_image_url, email_verified, google_id, created_at, password
+                   role, status, profile_image_url, email_verified, created_at, password
             FROM web_users
             WHERE (username = $1 OR email = $1)
             """,
@@ -461,7 +461,7 @@ async def update_current_user(
         SET {', '.join(update_fields)}
         WHERE id = ${param_count}
         RETURNING id, username, fullname, email, phone, domicilio, cuit, 
-                  role, status, profile_image_url, email_verified, google_id, created_at
+                  role, status, profile_image_url, email_verified, created_at
     """
     
     async with pool.acquire() as conn:

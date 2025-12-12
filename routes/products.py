@@ -3,7 +3,7 @@ Products API routes - handles all product-related endpoints.
 Uses PostgreSQL database for data persistence.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from typing import List, Optional
 from config.db_connection import db
 from models.product_models import (
@@ -15,9 +15,12 @@ from models.product_models import (
     OnlineStoreProduct,
     ProductImage,
     AddProductImage,
-    ProductDetail
+    ProductDetail,
+    ProductAllResponse,
+    ToggleOnlineRequest
 )
 import logging
+from utils.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +28,192 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# --- ADMIN ENDPOINTS ---
+# NOTE: These must be defined BEFORE /{product_id} route to avoid path conflicts
+
+@router.get("/all", response_model=List[ProductAllResponse], dependencies=[Depends(require_admin)])
+async def get_all_products_admin(provider_code: Optional[str] = None):
+    """
+    Get ALL products from the database (admin only).
+    Not filtered by en_tienda_online - returns everything.
+    
+    Query Parameters:
+    - provider_code: Optional filter by barcode/provider code
+    
+    Requires: Admin authentication
+    """
+    try:
+        query = """
+            SELECT 
+                id,
+                product_name,
+                provider_code,
+                sale_price,
+                en_tienda_online,
+                group_id,
+                description
+            FROM products
+        """
+        params = []
+        
+        if provider_code:
+            query += " WHERE provider_code ILIKE $1"
+            params.append(f"%{provider_code}%")
+        
+        query += " ORDER BY id DESC"
+        
+        products = await db.fetch_all(query, *params) if params else await db.fetch_all(query)
+        
+        return products
+        
+    except Exception as e:
+        logger.error(f"Error fetching all products (admin): {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener todos los productos: {str(e)}"
+        )
+
+
+@router.patch("/{product_id}/toggle-online", response_model=ProductResponse, dependencies=[Depends(require_admin)])
+async def toggle_product_online(product_id: int, toggle_data: ToggleOnlineRequest):
+    """
+    Activate or deactivate a product in the online store (admin only).
+    
+    Path Parameters:
+    - product_id: The ID of the product to toggle
+    
+    Request Body:
+    - en_tienda_online: true to activate, false to deactivate
+    - nombre_web: Product name for web (optional, uses product_name if not provided)
+    - descripcion_web: Product description for web (optional, uses description if not provided)
+    - precio_web: Price for web (optional but recommended when activating)
+    - slug: URL slug (optional, auto-generated from nombre_web if not provided)
+    
+    Validations:
+    - Product must exist
+    - When activating (en_tienda_online=true), nombre_web and precio_web should be set
+    - Slug must be unique
+    
+    Requires: Admin authentication
+    """
+    try:
+        # Check if product exists
+        existing = await db.fetch_one(
+            "SELECT id, product_name, description, sale_price FROM products WHERE id = $1", 
+            product_id
+        )
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Producto con ID {product_id} no encontrado"
+            )
+        
+        # Prepare update fields
+        update_fields = ["en_tienda_online = $1"]
+        params = [toggle_data.en_tienda_online]
+        param_count = 2
+        
+        # If activating, ensure required fields are set
+        if toggle_data.en_tienda_online:
+            # Use provided nombre_web or fallback to product_name
+            nombre_web = toggle_data.nombre_web or existing['product_name']
+            update_fields.append(f"nombre_web = ${param_count}")
+            params.append(nombre_web)
+            param_count += 1
+            
+            # Use provided descripcion_web or fallback to description
+            descripcion_web = toggle_data.descripcion_web or existing['description']
+            update_fields.append(f"descripcion_web = ${param_count}")
+            params.append(descripcion_web)
+            param_count += 1
+            
+            # Use provided precio_web or fallback to sale_price
+            precio_web = toggle_data.precio_web or existing['sale_price']
+            update_fields.append(f"precio_web = ${param_count}")
+            params.append(precio_web)
+            param_count += 1
+            
+            # Generate or use provided slug
+            if toggle_data.slug:
+                slug = toggle_data.slug
+            else:
+                # Auto-generate slug from nombre_web
+                import re
+                slug = re.sub(r'[^a-z0-9]+', '-', nombre_web.lower()).strip('-')
+                slug = f"{slug}-{product_id}"  # Add ID to ensure uniqueness
+            
+            # Check slug uniqueness
+            existing_slug = await db.fetch_one(
+                "SELECT id FROM products WHERE slug = $1 AND id != $2",
+                slug,
+                product_id
+            )
+            if existing_slug:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El slug '{slug}' ya está en uso por otro producto"
+                )
+            
+            update_fields.append(f"slug = ${param_count}")
+            params.append(slug)
+            param_count += 1
+        else:
+            # When deactivating, optionally update fields if provided
+            if toggle_data.nombre_web is not None:
+                update_fields.append(f"nombre_web = ${param_count}")
+                params.append(toggle_data.nombre_web)
+                param_count += 1
+            
+            if toggle_data.descripcion_web is not None:
+                update_fields.append(f"descripcion_web = ${param_count}")
+                params.append(toggle_data.descripcion_web)
+                param_count += 1
+            
+            if toggle_data.precio_web is not None:
+                update_fields.append(f"precio_web = ${param_count}")
+                params.append(toggle_data.precio_web)
+                param_count += 1
+            
+            if toggle_data.slug is not None:
+                update_fields.append(f"slug = ${param_count}")
+                params.append(toggle_data.slug)
+                param_count += 1
+        
+        # Add last_modified_date
+        update_fields.append(f"last_modified_date = CURRENT_TIMESTAMP")
+        
+        # Add product_id as the last parameter
+        params.append(product_id)
+        
+        query = f"""
+            UPDATE products
+            SET {', '.join(update_fields)}
+            WHERE id = ${param_count}
+            RETURNING id, product_name, description, cost, sale_price, provider_code,
+                      group_id, provider_id, brand_id, tax, discount,
+                      original_price, discount_percentage, discount_amount,
+                      has_discount, comments, state, 
+                      en_tienda_online, nombre_web, descripcion_web, slug, precio_web,
+                      creation_date, last_modified_date
+        """
+        
+        result = await db.fetch_one(query, *params)
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling product {product_id} online status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al cambiar el estado del producto: {str(e)}"
+        )
+
+
 # --- VIRTUAL STORE ENDPOINTS ---
 
-@router.get("/productos", response_model=List[OnlineStoreProduct])
+@router.get("/", response_model=List[OnlineStoreProduct])
 async def get_all_productos():
     """
     Get ALL products available in the online store (no limits).

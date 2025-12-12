@@ -43,21 +43,20 @@ class UserLogin(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """Model for user data response (without sensitive information)."""
+    """Response model for user data (excludes sensitive fields like password)."""
     id: int
     username: str
     fullname: Optional[str] = None
-    email: str
+    email: Optional[str] = None
     phone: Optional[str] = None
     domicilio: Optional[str] = None
     cuit: Optional[str] = None
-    role: Optional[str] = None
-    status: Optional[str] = None
+    role: str = "customer"
+    status: str = "active"
     profile_image_url: Optional[str] = None
-    email_verified: Optional[bool] = False
-    google_id: Optional[str] = None
-    created_at: Optional[str] = None
-
+    email_verified: bool = False
+    created_at: Optional[datetime] = None
+    
     class Config:
         from_attributes = True
         json_schema_extra = {
