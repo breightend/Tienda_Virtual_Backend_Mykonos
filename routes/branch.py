@@ -27,7 +27,7 @@ async def get_all_branches_admin():
 async def get_products_variants_by_branch(product_id: int):
     try:
         async with await db.transaction() as conn:
-            # 1. Obtener todas las combinaciones únicas de size/color del stock físico
+            
             unique_variants = await conn.fetch(
                 """
                 SELECT DISTINCT 
@@ -40,7 +40,7 @@ async def get_products_variants_by_branch(product_id: int):
                 product_id
             )
             
-            # 2. Crear web_variants si no existen
+            
             for variant in unique_variants:
                 await conn.execute(
                     """
@@ -53,7 +53,7 @@ async def get_products_variants_by_branch(product_id: int):
                     variant['color_id']
                 )
             
-            # 3. Ahora consultar todo (ahora todas las variantes tendrán variant_id)
+            
             query = """
                 SELECT 
                     s.id as branch_id,
@@ -78,9 +78,34 @@ async def get_products_variants_by_branch(product_id: int):
                 ORDER BY s.id, sz.size_name, c.color_name
             """
             
+            
             rows = await conn.fetch(query, product_id)
+
+            # Fetch active discount
+            discount_val = await conn.fetchval("""
+                SELECT COALESCE(MAX(discount_percentage), 0) FROM discounts 
+                WHERE discount_type='product' AND target_id=$1 AND is_active = TRUE
+                AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP) 
+                AND (end_date IS NULL OR end_date >= CURRENT_TIMESTAMP)
+            """, product_id)
+
+            # Fetch group name
+            group_name = await conn.fetchval("""
+                SELECT g.group_name 
+                FROM products p
+                LEFT JOIN groups g ON p.group_id = g.id
+                WHERE p.id = $1
+            """, product_id)
+
+            # Fetch provider name
+            provider_name = await conn.fetchval("""
+                SELECT e.entity_name 
+                FROM products p
+                LEFT JOIN entities e ON p.provider_id = e.id
+                WHERE p.id = $1
+            """, product_id)
         
-        # Group by branch
+        
         branches_dict = {}
         for row in rows:
             b_id = row['branch_id']
@@ -102,7 +127,14 @@ async def get_products_variants_by_branch(product_id: int):
                 "mostrar_en_web": row['mostrar_en_web']
             })
             
-        return list(branches_dict.values())
+        # Assign discount to all branches
+        result_list = list(branches_dict.values())
+        for branch_data in result_list:
+            branch_data["discount_percentage"] = discount_val or 0
+            branch_data["group_name"] = group_name or "Sin categoría"
+            branch_data["provider_name"] = provider_name or "Sin proveedor"
+            
+        return result_list
 
     except Exception as e:
         logger.error(f"Error fetching products variants by branch (admin): {e}")

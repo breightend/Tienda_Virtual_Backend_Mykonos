@@ -13,11 +13,12 @@ class VarianteUpdateInput(BaseModel):
     configuracion_stock: List[StockSucursalInput]
 
 class ProductoUpdateSchema(BaseModel):
-    nombre: str
+    nombre: Optional[str] = None
     descripcion: Optional[str] = None
-    precio_web: float
-    en_tienda_online: bool
-    variantes: List[VarianteUpdateInput]
+    precio_web: Optional[float] = None
+    en_tienda_online: Optional[bool] = None
+    variantes: Optional[List[VarianteUpdateInput]] = []
+    discount_percentage: Optional[float] = 0
 
     # Configuración V2
     model_config = ConfigDict(from_attributes=True)

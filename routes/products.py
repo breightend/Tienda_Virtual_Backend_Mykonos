@@ -42,42 +42,6 @@ IMAGES_DIR = "/home/breightend/imagenes-productos"
 IMAGES_BASE_URL = "/static/productos"
 
 
-@router.get("/info-matrix", response_model=List[ProductInfoMatrix], dependencies=[Depends(require_admin)])
-async def get_products_info_matrix():
-    """
-    Get a matrix of product information: Name, Web Price, Discount, Stock, Group, Provider.
-    
-    Returns:
-    - List of products with specific fields for the info matrix view.
-    """
-    try:
-        query = """
-            SELECT 
-                p.id,
-                p.product_name,
-                p.precio_web,
-                p.discount_percentage as discount,
-                COALESCE(SUM(wv.displayed_stock), 0) as stock,
-                g.group_name as group,
-                e.entity_name as provider
-            FROM products p
-            LEFT JOIN groups g ON p.group_id = g.id
-            LEFT JOIN entities e ON p.provider_id = e.id
-            LEFT JOIN web_variants wv ON wv.product_id = p.id AND wv.is_active = TRUE
-            GROUP BY p.id, g.group_name, e.entity_name
-            ORDER BY p.id DESC
-        """
-        
-        products = await db.fetch_all(query)
-        return products
-        
-    except Exception as e:
-        logger.error(f"Error fetching product info matrix: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al obtener la matriz de información: {str(e)}"
-        )
-
 
 @router.get("/all", response_model=List[ProductAllResponse], dependencies=[Depends(require_admin)])
 async def get_all_products_admin(provider_code: Optional[str] = None):
@@ -93,22 +57,26 @@ async def get_all_products_admin(provider_code: Optional[str] = None):
     try:
         query = """
             SELECT 
-                id,
-                product_name,
-                provider_code,
-                sale_price,
-                en_tienda_online,
-                group_id,
-                description
-            FROM products
+                p.id,
+                p.product_name,
+                p.provider_code,
+                p.sale_price,
+                p.en_tienda_online,
+                p.group_id,
+                p.description,
+                COALESCE(MAX(d.discount_percentage), 0) as discount_percentage
+            FROM products p
+            LEFT JOIN discounts d ON d.target_id = p.id AND d.discount_type = 'product' AND d.is_active = TRUE 
+                AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
+                AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
         """
         params = []
         
         if provider_code:
-            query += " WHERE provider_code ILIKE $1"
+            query += " WHERE p.provider_code ILIKE $1"
             params.append(f"%{provider_code}%")
         
-        query += " ORDER BY id DESC"
+        query += " GROUP BY p.id ORDER BY p.id DESC"
         
         products = await db.fetch_all(query, *params) if params else await db.fetch_all(query)
         
@@ -344,7 +312,7 @@ async def apply_product_discount(
     try:
         # Check if product exists
         product = await db.fetch_one(
-            "SELECT id, sale_price, original_price, has_discount FROM products WHERE id = $1",
+            "SELECT id, sale_price FROM products WHERE id = $1",
             product_id
         )
         if not product:
@@ -361,79 +329,62 @@ async def apply_product_discount(
                     detail="El porcentaje de descuento debe estar entre 0 y 100"
                 )
             
-            # Determine original price
-            if original_price is None:
-                # Use existing original_price if product already has discount, otherwise use current sale_price
-                if product['has_discount'] == 1 and product['original_price']:
-                    original_price = product['original_price']
-                else:
-                    original_price = product['sale_price']
-            
-            # Calculate discount amount and new price
-            # Ensure calculations are done with floats to avoid potential Decimal issues if not explicitly handled
-            discount_amount = float(original_price) * (discount_percentage / 100)
-            new_sale_price = float(original_price) - discount_amount
-            
-            # Update product
-            result = await db.fetch_one(
+            # Check for existing active discount
+            existing_discount = await db.fetch_one(
                 """
-                UPDATE products
-                SET has_discount = 1,
-                    discount_percentage = $1,
-                    original_price = $2,
-                    discount_amount = $3,
-                    sale_price = $4,
-                    last_modified_date = CURRENT_TIMESTAMP
-                WHERE id = $5
-                RETURNING id, product_name, sale_price, original_price, discount_percentage, discount_amount, has_discount
+                SELECT id FROM discounts 
+                WHERE discount_type = 'product' AND target_id = $1 AND is_active = TRUE
                 """,
-                discount_percentage,
-                original_price,
-                discount_amount,
-                new_sale_price,
                 product_id
             )
+
+            if existing_discount:
+                # Update existing discount
+                await db.execute(
+                    """
+                    UPDATE discounts 
+                    SET discount_percentage = $1, updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = $2
+                    """,
+                    discount_percentage, existing_discount['id']
+                )
+            else:
+                # Insert new discount
+                await db.execute(
+                    """
+                    INSERT INTO discounts (discount_type, target_id, discount_percentage, is_active, start_date)
+                    VALUES ('product', $1, $2, TRUE, CURRENT_TIMESTAMP)
+                    """,
+                    product_id, discount_percentage
+                )
             
             return {
-                "id": result['id'],
-                "product_name": result['product_name'],
-                "original_price": result['original_price'],
-                "discount_percentage": result['discount_percentage'],
-                "discount_amount": result['discount_amount'],
-                "sale_price": result['sale_price'],
-                "has_discount": result['has_discount'],
-                "message": f"Descuento del {discount_percentage}% aplicado exitosamente"
+                "id": product_id,
+                "product_name": product.get('product_name', ''), # Might not be fetched in validation query, but simplified return
+                "sale_price": product['sale_price'],
+                "discount_percentage": discount_percentage,
+                "has_discount": 1,
+                "message": f"Descuento del {discount_percentage}% aplicado exitosamente en tabla discounts"
             }
         
         else:
             # Removing discount
-            if not product['original_price']:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="El producto no tiene descuento aplicado"
-                )
-            
-            # Restore original price
-            result = await db.fetch_one(
+            # Deactivate all active product discounts for this product
+            await db.execute(
                 """
-                UPDATE products
-                SET has_discount = 0,
-                    discount_percentage = 0,
-                    discount_amount = 0,
-                    sale_price = original_price,
-                    last_modified_date = CURRENT_TIMESTAMP
-                WHERE id = $1
-                RETURNING id, product_name, sale_price, has_discount
+                UPDATE discounts 
+                SET is_active = FALSE, end_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE discount_type = 'product' AND target_id = $1 AND is_active = TRUE
                 """,
                 product_id
             )
             
             return {
-                "id": result['id'],
-                "product_name": result['product_name'],
-                "sale_price": result['sale_price'],
-                "has_discount": result['has_discount'],
-                "message": "Descuento removido exitosamente, precio restaurado"
+                "id": product_id,
+                "product_name": product.get('product_name', ''),
+                "sale_price": product['sale_price'],
+                "has_discount": 0,
+                "message": "Descuento removido exitosamente de tabla discounts"
             }
         
     except HTTPException:
@@ -640,15 +591,37 @@ async def update_product(product_id: int, payload: ProductoUpdateSchema):
 
         async with await db.transaction() as conn:
             # 2. Actualizar Info General del Producto
+            # Construir query dinámica
+            update_fields = ["last_modified_date = CURRENT_TIMESTAMP"]
+            params = [product_id]
+            param_count = 2
+            
+            if payload.nombre is not None:
+                update_fields.append(f"nombre_web = ${param_count}")
+                params.append(payload.nombre)
+                param_count += 1
+            
+            if payload.descripcion is not None:
+                update_fields.append(f"descripcion_web = ${param_count}")
+                params.append(payload.descripcion)
+                param_count += 1
+                
+            if payload.precio_web is not None:
+                update_fields.append(f"precio_web = ${param_count}")
+                params.append(payload.precio_web)
+                param_count += 1
+                
+            if payload.en_tienda_online is not None:
+                update_fields.append(f"en_tienda_online = ${param_count}")
+                params.append(payload.en_tienda_online)
+                param_count += 1
+
+            # Ejecutar update si hay campos
             updated_product = dict(await conn.fetchrow(
-                """
+                f"""
                 UPDATE products 
-                SET nombre_web = $1,
-                    descripcion_web = $2,
-                    precio_web = $3,
-                    en_tienda_online = $4,
-                    last_modified_date = CURRENT_TIMESTAMP
-                WHERE id = $5
+                SET {', '.join(update_fields)}
+                WHERE id = $1
                 RETURNING id, product_name, description, cost, sale_price, provider_code,
                           group_id, provider_id, brand_id, tax, discount,
                           original_price, discount_percentage, discount_amount,
@@ -656,100 +629,123 @@ async def update_product(product_id: int, payload: ProductoUpdateSchema):
                           en_tienda_online, nombre_web, descripcion_web, slug, precio_web,
                           creation_date, last_modified_date, user_id
                 """,
-                payload.nombre,
-                payload.descripcion,
-                payload.precio_web,
-                payload.en_tienda_online,
-                product_id
+                *params
             ))
-
-            # 3. Procesar las Variantes
-            for var_input in payload.variantes:
-                # 3.1. Verificar que la variante existe y pertenece al producto
-                variant_exists = await conn.fetchval(
-                    """
-                    SELECT id FROM web_variants 
-                    WHERE id = $1 AND product_id = $2
-                    """,
-                    var_input.id,
-                    product_id
-                )
-                
-                if not variant_exists:
-                    logger.warning(f"Variante {var_input.id} no encontrada para producto {product_id}, saltando...")
-                    continue
-                
-                # 3.2. Calcular el stock total web desde configuracion_stock
-                total_stock_web = sum(
-                    asignacion.cantidad_asignada 
-                    for asignacion in var_input.configuracion_stock
-                )
-                
-                # 3.3. Actualizar web_variants (stock total)
-                await conn.execute(
-                    """
-                    UPDATE web_variants
-                    SET is_active = $1,
-                        displayed_stock = $2
-                    WHERE id = $3 AND product_id = $4
-                    """,
-                    var_input.mostrar_en_web,
-                    total_stock_web,
-                    var_input.id,
-                    product_id
-                )
-                
-                # 3.4. NUEVO: Limpiar asignaciones anteriores de esta variante
-                await conn.execute(
-                    """
-                    DELETE FROM web_variant_branch_assignment
-                    WHERE variant_id = $1
-                    """,
-                    var_input.id
-                )
-                
-                # 3.5. NUEVO: Insertar nuevas asignaciones por sucursal
-                for asignacion in var_input.configuracion_stock:
-                    if asignacion.cantidad_asignada > 0:
-                        # Validar que la cantidad asignada no exceda el stock físico
-                        stock_fisico = await conn.fetchval(
-                            """
-                            SELECT COALESCE(quantity, 0)
-                            FROM warehouse_stock_variants wsv
-                            JOIN web_variants wv ON wv.product_id = wsv.product_id 
-                                AND wv.size_id = wsv.size_id 
-                                AND wv.color_id = wsv.color_id
-                            WHERE wv.id = $1 AND wsv.branch_id = $2
-                            """,
-                            var_input.id,
-                            asignacion.sucursal_id
-                        ) or 0
-                        
-                        if asignacion.cantidad_asignada > stock_fisico:
-                            logger.warning(
-                                f"Asignación web ({asignacion.cantidad_asignada}) excede stock físico ({stock_fisico}) "
-                                f"para variante {var_input.id} en sucursal {asignacion.sucursal_id}. "
-                                f"Ajustando a {stock_fisico}"
-                            )
-                            asignacion.cantidad_asignada = stock_fisico
-                        
-                        # Insertar asignación
+            
+            # 2.5 Actualizar Descuento si está presente
+            if payload.discount_percentage is not None:
+                if payload.discount_percentage > 0:
+                     # Check existing
+                    existing_disc = await conn.fetchval(
+                        "SELECT id FROM discounts WHERE discount_type='product' AND target_id=$1 AND is_active=TRUE",
+                        product_id
+                    )
+                    if existing_disc:
                         await conn.execute(
-                            """
-                            INSERT INTO web_variant_branch_assignment 
-                                (variant_id, branch_id, cantidad_asignada, updated_at)
-                            VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-                            """,
-                            var_input.id,
-                            asignacion.sucursal_id,
-                            asignacion.cantidad_asignada
+                            "UPDATE discounts SET discount_percentage=$1, updated_at=CURRENT_TIMESTAMP WHERE id=$2",
+                            payload.discount_percentage, existing_disc
                         )
-                
-                logger.info(
-                    f"Variante {var_input.id} actualizada: "
-                    f"stock_web={total_stock_web}, visible={var_input.mostrar_en_web}, "
-                    f"asignaciones={len(var_input.configuracion_stock)}"
-                )
+                    else:
+                        await conn.execute(
+                            "INSERT INTO discounts (discount_type, target_id, discount_percentage, is_active, start_date) VALUES ('product', $1, $2, TRUE, CURRENT_TIMESTAMP)",
+                            product_id, payload.discount_percentage
+                        )
+                else:
+                    # Deactivate discount if sent as 0
+                    await conn.execute(
+                        "UPDATE discounts SET is_active=FALSE, end_date=CURRENT_TIMESTAMP WHERE discount_type='product' AND target_id=$1 AND is_active=TRUE",
+                        product_id
+                    )
+            
+
+            # 3. Procesar las Variantes (Solo si se envían)
+            if payload.variantes:
+                for var_input in payload.variantes:
+                    # 3.1. Verificar que la variante existe y pertenece al producto
+                    variant_exists = await conn.fetchval(
+                        """
+                        SELECT id FROM web_variants 
+                        WHERE id = $1 AND product_id = $2
+                        """,
+                        var_input.id,
+                        product_id
+                    )
+                    
+                    if not variant_exists:
+                        logger.warning(f"Variante {var_input.id} no encontrada para producto {product_id}, saltando...")
+                        continue
+                    
+                    # 3.2. Calcular el stock total web desde configuracion_stock
+                    total_stock_web = sum(
+                        asignacion.cantidad_asignada 
+                        for asignacion in var_input.configuracion_stock
+                    )
+                    
+                    # 3.3. Actualizar web_variants (stock total)
+                    await conn.execute(
+                        """
+                        UPDATE web_variants
+                        SET is_active = $1,
+                            displayed_stock = $2
+                        WHERE id = $3 AND product_id = $4
+                        """,
+                        var_input.mostrar_en_web,
+                        total_stock_web,
+                        var_input.id,
+                        product_id
+                    )
+                    
+                    # 3.4. NUEVO: Limpiar asignaciones anteriores de esta variante
+                    await conn.execute(
+                        """
+                        DELETE FROM web_variant_branch_assignment
+                        WHERE variant_id = $1
+                        """,
+                        var_input.id
+                    )
+                    
+                    # 3.5. NUEVO: Insertar nuevas asignaciones por sucursal
+                    for asignacion in var_input.configuracion_stock:
+                        if asignacion.cantidad_asignada > 0:
+                            # Validar que la cantidad asignada no exceda el stock físico
+                            stock_fisico = await conn.fetchval(
+                                """
+                                SELECT COALESCE(quantity, 0)
+                                FROM warehouse_stock_variants wsv
+                                JOIN web_variants wv ON wv.product_id = wsv.product_id 
+                                    AND wv.size_id = wsv.size_id 
+                                    AND wv.color_id = wsv.color_id
+                                WHERE wv.id = $1 AND wsv.branch_id = $2
+                                """,
+                                var_input.id,
+                                asignacion.sucursal_id
+                            ) or 0
+                            
+                            if asignacion.cantidad_asignada > stock_fisico:
+                                logger.warning(
+                                    f"Asignación web ({asignacion.cantidad_asignada}) excede stock físico ({stock_fisico}) "
+                                    f"para variante {var_input.id} en sucursal {asignacion.sucursal_id}. "
+                                    f"Ajustando a {stock_fisico}"
+                                )
+                                asignacion.cantidad_asignada = stock_fisico
+                            
+                            # Insertar asignación
+                            await conn.execute(
+                                """
+                                INSERT INTO web_variant_branch_assignment 
+                                    (variant_id, branch_id, cantidad_asignada, updated_at)
+                                VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+                                """,
+                                var_input.id,
+                                asignacion.sucursal_id,
+                                asignacion.cantidad_asignada
+                            )
+                    
+                    logger.info(
+                        f"Variante {var_input.id} actualizada: "
+                        f"stock_web={total_stock_web}, visible={var_input.mostrar_en_web}, "
+                        f"asignaciones={len(var_input.configuracion_stock)}"
+                    )
         
         logger.info(f"Producto {product_id} actualizado correctamente con {len(payload.variantes)} variantes")
         return updated_product
@@ -794,16 +790,18 @@ async def get_all_productos(
                         ARRAY[]::TEXT[]
                     ) as images,
                     COALESCE(SUM(wv.displayed_stock), 0) as stock_disponible,
-                    COALESCE(MAX(d.discount_percentage), 0) as discount_percentage
+                    COALESCE(MAX(d.discount_percentage), 0) as discount_percentage,
+                    e.entity_name as provider
                 FROM products p
                 LEFT JOIN groups g ON p.group_id = g.id
                 LEFT JOIN images i ON i.product_id = p.id
+                LEFT JOIN entities e ON p.provider_id = e.id
                 LEFT JOIN web_variants wv ON wv.product_id = p.id AND wv.is_active = TRUE
                 LEFT JOIN discounts d ON d.target_id = p.id AND d.discount_type = 'product' AND d.is_active = TRUE 
                     AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
                     AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
                 WHERE p.en_tienda_online = TRUE
-                GROUP BY p.id, g.group_name
+                GROUP BY p.id, g.group_name, e.entity_name
                 ORDER BY p.id DESC
             """
             params_products = []
@@ -826,10 +824,12 @@ async def get_all_productos(
                         ARRAY[]::TEXT[]
                     ) as images,
                     COALESCE(SUM(wsv.quantity), 0) as stock_disponible,
-                    COALESCE(MAX(d.discount_percentage), 0) as discount_percentage
+                    COALESCE(MAX(d.discount_percentage), 0) as discount_percentage,
+                    e.entity_name as provider
                 FROM products p
                 LEFT JOIN groups g ON p.group_id = g.id
                 LEFT JOIN images i ON i.product_id = p.id
+                LEFT JOIN entities e ON p.provider_id = e.id
                 LEFT JOIN web_variants wv ON wv.product_id = p.id AND wv.is_active = TRUE -- Usa LEFT JOIN para mostrar productos sin variantes aun
                 LEFT JOIN warehouse_stock_variants wsv 
                     ON wsv.product_id = p.id 
@@ -840,7 +840,7 @@ async def get_all_productos(
                     AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
                     AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
                 WHERE p.en_tienda_online = TRUE
-                GROUP BY p.id, g.group_name
+                GROUP BY p.id, g.group_name, e.entity_name
                 ORDER BY p.id DESC
             """
             params_products = [branch_id]
@@ -1069,11 +1069,15 @@ async def get_product(
                         ARRAY_AGG(DISTINCT i.image_url) FILTER (WHERE i.image_url IS NOT NULL),
                         '{}'
                     ) as images,
-                    COALESCE(SUM(wv.displayed_stock), 0) as stock_disponible
+                    COALESCE(SUM(wv.displayed_stock), 0) as stock_disponible,
+                    COALESCE(MAX(d.discount_percentage), 0) as discount_percentage
                 FROM products p
                 LEFT JOIN groups g ON p.group_id = g.id
                 LEFT JOIN images i ON i.product_id = p.id
                 LEFT JOIN web_variants wv ON wv.product_id = p.id AND wv.is_active = TRUE
+                LEFT JOIN discounts d ON d.target_id = p.id AND d.discount_type = 'product' AND d.is_active = TRUE 
+                    AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
+                    AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
                 WHERE p.id = $1 AND p.en_tienda_online = TRUE
                 GROUP BY p.id, g.group_name
             """
@@ -1092,7 +1096,8 @@ async def get_product(
                         ARRAY_AGG(DISTINCT i.image_url) FILTER (WHERE i.image_url IS NOT NULL),
                         '{}'
                     ) as images,
-                    COALESCE(SUM(wsv.quantity), 0) as stock_disponible
+                    COALESCE(SUM(wsv.quantity), 0) as stock_disponible,
+                    COALESCE(MAX(d.discount_percentage), 0) as discount_percentage
                 FROM products p
                 LEFT JOIN groups g ON p.group_id = g.id
                 LEFT JOIN images i ON i.product_id = p.id
@@ -1102,6 +1107,9 @@ async def get_product(
                     AND wsv.size_id = wv.size_id 
                     AND wsv.color_id = wv.color_id
                     AND wsv.branch_id = $2
+                LEFT JOIN discounts d ON d.target_id = p.id AND d.discount_type = 'product' AND d.is_active = TRUE 
+                    AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
+                    AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
                 WHERE p.id = $1 AND p.en_tienda_online = TRUE
                 GROUP BY p.id, g.group_name
             """
@@ -1222,6 +1230,16 @@ async def create_product(product: ProductCreate):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error al crear el producto"
+            )
+
+        # Handle initial discount in discounts table if provided
+        if product.has_discount and product.discount_percentage > 0:
+            await db.execute(
+                """
+                INSERT INTO discounts (discount_type, target_id, discount_percentage, is_active, start_date)
+                VALUES ('product', $1, $2, TRUE, CURRENT_TIMESTAMP)
+                """,
+                result['id'], product.discount_percentage
             )
         
         return result
@@ -1558,33 +1576,36 @@ async def search_product_by_barcode(barcode: str):
         # 3. Obtener la información del producto
         query_product = """
             SELECT 
-                id,
-                product_name,
-                description,
-                cost,
-                sale_price,
-                provider_code,
-                group_id,
-                provider_id,
-                brand_id,
-                tax,
-                discount,
-                original_price,
-                discount_percentage,
-                discount_amount,
-                has_discount,
-                comments,
-                state,
-                en_tienda_online,
-                nombre_web,
-                descripcion_web,
-                slug,
-                precio_web,
-                creation_date,
-                last_modified_date,
-                user_id
-            FROM products
-            WHERE id = $1
+                p.id,
+                p.product_name,
+                p.description,
+                p.cost,
+                p.sale_price,
+                p.provider_code,
+                p.group_id,
+                p.provider_id,
+                p.brand_id,
+                p.tax,
+                p.original_price,
+                p.discount_amount,
+                p.comments,
+                p.state,
+                p.en_tienda_online,
+                p.nombre_web,
+                p.descripcion_web,
+                p.slug,
+                p.precio_web,
+                p.creation_date,
+                p.last_modified_date,
+                p.user_id,
+                COALESCE(MAX(d.discount_percentage), 0) as discount_percentage,
+                CASE WHEN MAX(d.discount_percentage) > 0 THEN 1 ELSE 0 END as has_discount
+            FROM products p
+            LEFT JOIN discounts d ON d.target_id = p.id AND d.discount_type = 'product' AND d.is_active = TRUE 
+                AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
+                AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
+            WHERE p.id = $1
+            GROUP BY p.id
         """
         
         product = await db.fetch_one(query_product, product_id)

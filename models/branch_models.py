@@ -27,4 +27,7 @@ class VariantStock(BaseModel):
 class BranchWithStock(BaseModel):
     branch_id: int
     branch_name: str
+    group_name: Optional[str] = None
+    provider_name: Optional[str] = None
+    discount_percentage: Optional[float] = 0
     variants: List[VariantStock]
