@@ -8,6 +8,9 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 from utils.email import send_contact_email
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -43,7 +46,9 @@ async def submit_contact_form(form_data: ContactForm):
         }
     except Exception as e:
         print(f"Error sending contact email: {e}")
+        logger.error(f"Error details: {str(e)}")
+        # Return specific error for debugging
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to send message. Please try again later."
+            detail=f"Failed to send message: {str(e)}"
         )

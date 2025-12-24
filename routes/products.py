@@ -956,21 +956,52 @@ async def get_all_productos(
     branch_id: Optional[int] = Query(
         None, 
         description="ID de la sucursal para filtrar stock. Si es null, muestra el stock general de la web."
-    )
+    ),
+    skip: int = 0,
+    limit: int = 50
 ):
     """
-    Obtiene productos de la tienda online.
-    - Si NO se envía branch_id: Usa el stock definido manualmente en WEB_VARIANTS.
-    - Si SE envía branch_id: Usa el catálogo de WEB_VARIANTS pero muestra el stock real de WAREHOUSE_STOCK_VARIANTS para esa sucursal.
+    Obtiene productos de la tienda online con paginación.
+    - skip: Cantidad de registros a saltar (offset)
+    - limit: Cantidad de registros a devolver (default 50)
     """
     try:
-        # 1. Definimos la consulta PRINCIPAL (Listado de productos)
-        # Necesitamos calcular el "stock total" para la vista de tarjeta del producto
+        # Usamos CTEs (Common Table Expressions) para evitar el producto cartesiano
+        # entre imágenes y variantes, que causaba cálculos de stock incorrectos y lentitud.
         
         if branch_id is None:
             # --- MODO GLOBAL (WEB) ---
-            # Sumamos el stock manual configurado en WEB_VARIANTS
             query_products = """
+                WITH product_images AS (
+                    SELECT product_id, ARRAY_AGG(image_url ORDER BY id ASC) as images
+                    FROM images
+                    GROUP BY product_id
+                ),
+                product_variants AS (
+                    SELECT 
+                        wv.product_id,
+                        COALESCE(SUM(wv.displayed_stock), 0) as total_stock,
+                        json_agg(json_build_object(
+                            'variant_id', wv.id,
+                            'talle', s.size_name,
+                            'color', c.color_name,
+                            'color_hex', c.color_hex,
+                            'stock', wv.displayed_stock,
+                            'barcode', ''
+                        ) ORDER BY s.size_name, c.color_name) as variantes
+                    FROM web_variants wv
+                    LEFT JOIN sizes s ON wv.size_id = s.id
+                    LEFT JOIN colors c ON wv.color_id = c.id
+                    WHERE wv.is_active = TRUE
+                    GROUP BY wv.product_id
+                ),
+                active_discounts AS (
+                     SELECT target_id, discount_percentage 
+                     FROM discounts 
+                     WHERE discount_type = 'product' AND is_active = TRUE
+                     AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
+                     AND (end_date IS NULL OR end_date >= CURRENT_TIMESTAMP)
+                )
                 SELECT 
                     p.id,
                     p.nombre_web,
@@ -979,134 +1010,101 @@ async def get_all_productos(
                     p.slug,
                     g.group_name,
                     COALESCE(g.group_name, 'Sin categoría') as category,
-                    COALESCE(
-                        ARRAY_AGG(DISTINCT i.image_url) FILTER (WHERE i.image_url IS NOT NULL),
-                        ARRAY[]::TEXT[]
-                    ) as images,
-                    COALESCE(SUM(wv.displayed_stock), 0) as stock_disponible,
-                    COALESCE(MAX(d.discount_percentage), MAX(p.discount_percentage), 0) as discount_percentage,
+                    COALESCE(img.images, ARRAY[]::TEXT[]) as images,
+                    COALESCE(v.total_stock, 0) as stock_disponible,
+                    COALESCE(v.variantes, '[]'::json) as variantes,
+                    COALESCE(d.discount_percentage, p.discount_percentage, 0) as discount_percentage,
                     e.entity_name as provider
                 FROM products p
                 LEFT JOIN groups g ON p.group_id = g.id
-                LEFT JOIN images i ON i.product_id = p.id
                 LEFT JOIN entities e ON p.provider_id = e.id
-                LEFT JOIN web_variants wv ON wv.product_id = p.id AND wv.is_active = TRUE
-                LEFT JOIN discounts d ON d.target_id = p.id AND d.discount_type = 'product' AND d.is_active = TRUE 
-                    AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
-                    AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
+                LEFT JOIN product_images img ON p.id = img.product_id
+                LEFT JOIN product_variants v ON p.id = v.product_id
+                LEFT JOIN active_discounts d ON p.id = d.target_id
                 WHERE p.en_tienda_online = TRUE
-                GROUP BY p.id, g.group_name, e.entity_name
                 ORDER BY p.id DESC
+                LIMIT $1 OFFSET $2
             """
-            params_products = []
+            
+            products = await db.fetch_all(query_products, limit, skip)
             
         else:
             # --- MODO SUCURSAL ---
-            # Sumamos el stock real de WAREHOUSE_STOCK filtrado por sucursal
-            # Notar que seguimos haciendo JOIN a web_variants para asegurar que solo traemos
-            # productos que TIENEN variante web configurada.
+            # Verifica si la sucursal existe
+            branch_exists = await db.fetchval("SELECT id FROM storage WHERE id = $1", branch_id)
+            if not branch_exists:
+                 return []
+
             query_products = """
+                WITH product_images AS (
+                    SELECT product_id, ARRAY_AGG(image_url ORDER BY id ASC) as images
+                    FROM images
+                    GROUP BY product_id
+                ),
+                product_variants_branch AS (
+                    SELECT 
+                        wv.product_id, 
+                        COALESCE(SUM(wsv.quantity), 0) as total_stock,
+                        json_agg(json_build_object(
+                            'variant_id', wv.id,
+                            'talle', s.size_name,
+                            'color', c.color_name,
+                            'color_hex', c.color_hex,
+                            'stock', wsv.quantity,
+                            'barcode', wsv.variant_barcode
+                        ) ORDER BY s.size_name, c.color_name) as variantes
+                    FROM web_variants wv
+                    JOIN warehouse_stock_variants wsv ON wv.product_id = wsv.product_id 
+                        AND wv.size_id = wsv.size_id 
+                        AND wv.color_id = wsv.color_id
+                    LEFT JOIN sizes s ON wv.size_id = s.id
+                    LEFT JOIN colors c ON wv.color_id = c.id
+                    WHERE wv.is_active = TRUE AND wsv.branch_id = $3
+                    GROUP BY wv.product_id
+                ),
+                active_discounts AS (
+                     SELECT target_id, discount_percentage 
+                     FROM discounts 
+                     WHERE discount_type = 'product' AND is_active = TRUE
+                     AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
+                     AND (end_date IS NULL OR end_date >= CURRENT_TIMESTAMP)
+                )
                 SELECT 
                     p.id,
                     p.nombre_web,
                     p.descripcion_web,
                     p.precio_web,
                     p.slug,
+                    g.group_name,
                     COALESCE(g.group_name, 'Sin categoría') as category,
-                    COALESCE(
-                        ARRAY_AGG(DISTINCT i.image_url) FILTER (WHERE i.image_url IS NOT NULL),
-                        ARRAY[]::TEXT[]
-                    ) as images,
-                    COALESCE(SUM(wsv.quantity), 0) as stock_disponible,
-                    COALESCE(MAX(d.discount_percentage), MAX(p.discount_percentage), 0) as discount_percentage,
+                    COALESCE(img.images, ARRAY[]::TEXT[]) as images,
+                    COALESCE(s.total_stock, 0) as stock_disponible,
+                    COALESCE(s.variantes, '[]'::json) as variantes,
+                    COALESCE(d.discount_percentage, p.discount_percentage, 0) as discount_percentage,
                     e.entity_name as provider
                 FROM products p
                 LEFT JOIN groups g ON p.group_id = g.id
-                LEFT JOIN images i ON i.product_id = p.id
                 LEFT JOIN entities e ON p.provider_id = e.id
-                LEFT JOIN web_variants wv ON wv.product_id = p.id AND wv.is_active = TRUE -- Usa LEFT JOIN para mostrar productos sin variantes aun
-                LEFT JOIN warehouse_stock_variants wsv 
-                    ON wsv.product_id = p.id 
-                    AND wsv.size_id = wv.size_id 
-                    AND wsv.color_id = wv.color_id
-                    AND wsv.branch_id = $1 -- Filtramos por sucursal
-                LEFT JOIN discounts d ON d.target_id = p.id AND d.discount_type = 'product' AND d.is_active = TRUE 
-                    AND (d.start_date IS NULL OR d.start_date <= CURRENT_TIMESTAMP) 
-                    AND (d.end_date IS NULL OR d.end_date >= CURRENT_TIMESTAMP)
+                LEFT JOIN product_images img ON p.id = img.product_id
+                LEFT JOIN product_variants_branch s ON p.id = s.product_id
+                LEFT JOIN active_discounts d ON p.id = d.target_id
                 WHERE p.en_tienda_online = TRUE
-                GROUP BY p.id, g.group_name, e.entity_name
                 ORDER BY p.id DESC
+                LIMIT $1 OFFSET $2
             """
-            params_products = [branch_id]
+            
+            products = await db.fetch_all(query_products, limit, skip, branch_id)
 
-        # Ejecutamos la consulta principal
-        products = await db.fetch_all(query_products, *params_products)
-        
-        # 2. Iteramos para buscar las variantes (Detalle)
-        result = []
-        for product in products:
-            product_dict = dict(product)
-            
-            if branch_id is None:
-                # --- QUERY VARIANTES GLOBAL ---
-                # Trae el stock manual de WEB_VARIANTS
-                variants_query = """
-                    SELECT 
-                        wv.id as web_variant_id, -- Usamos el ID de la variante web
-                        s.size_name as talle,
-                        c.color_name as color,
-                        c.color_hex,
-                        wv.displayed_stock as stock, -- Stock manual
-                        '' as barcode -- Opcional, o busca el barcode genérico
-                    FROM web_variants wv
-                    LEFT JOIN sizes s ON wv.size_id = s.id
-                    LEFT JOIN colors c ON wv.color_id = c.id
-                    WHERE wv.product_id = $1 AND wv.is_active = TRUE
-                    ORDER BY s.size_name, c.color_name
-                """
-                variants = await db.fetch_all(variants_query, product['id'])
-            
-            else:
-                # --- QUERY VARIANTES SUCURSAL ---
-                # Cruza WEB_VARIANTS con WAREHOUSE_STOCK_VARIANTS
-                variants_query = """
-                    SELECT 
-                        wv.id as web_variant_id,
-                        s.size_name as talle,
-                        c.color_name as color,
-                        c.color_hex,
-                        COALESCE(wsv.quantity, 0) as stock, -- Stock REAL de la sucursal
-                        wsv.variant_barcode as barcode
-                    FROM web_variants wv
-                    LEFT JOIN sizes s ON wv.size_id = s.id
-                    LEFT JOIN colors c ON wv.color_id = c.id
-                    LEFT JOIN warehouse_stock_variants wsv 
-                        ON wsv.product_id = wv.product_id 
-                        AND wsv.size_id = wv.size_id 
-                        AND wsv.color_id = wv.color_id
-                        AND wsv.branch_id = $2  -- Parametro 2: ID Sucursal
-                    WHERE wv.product_id = $1 AND wv.is_active = TRUE -- Parametro 1: ID Producto
-                    ORDER BY s.size_name, c.color_name
-                """
-                variants = await db.fetch_all(variants_query, product['id'], branch_id)
+        # Parse JSON strings to objects
+        parsed_products = []
+        for p in products:
+            p_dict = dict(p)
+            if isinstance(p_dict.get('variantes'), str):
+                import json
+                p_dict['variantes'] = json.loads(p_dict['variantes'])
+            parsed_products.append(p_dict)
 
-            # Formateamos la respuesta de variantes
-            product_dict['variantes'] = [
-                {
-                    "variant_id": v['web_variant_id'], # Importante: el ID ahora es el de WEB_VARIANTS
-                    "talle": v['talle'],
-                    "color": v['color'],
-                    "color_hex": v['color_hex'],
-                    "stock": v['stock'],
-                    "barcode": v['barcode'] if v['barcode'] else "WEB-VAR"
-                } 
-                for v in variants
-            ]
-            
-            result.append(product_dict)
-        
-        return result
-        
+        return parsed_products
     except Exception as e:
         # logger.error(f"Error fetching productos: {e}") 
         # Asegúrate de importar logger si lo usas

@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-@router.get("/all", response_model=List[BranchResponse], dependencies=[Depends(require_admin)])
-async def get_all_branches_admin():
+@router.get("/all", response_model=List[BranchResponse])
+async def get_all_branches():
     try:
         # The table name is 'storage' as per TABLES.STORAGE definition in database.py
         branches = await db.fetch_all("SELECT * FROM storage")
